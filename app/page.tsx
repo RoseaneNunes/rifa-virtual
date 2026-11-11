@@ -9,9 +9,20 @@ import {
 } from "react";
 import { PIX_KEY, PIX_NAME } from "./lib/pix";
 
-const START = 251;
-const END = 270;
-const NUMBERS = Array.from({ length: END - START + 1 }, (_, i) => START + i);
+function range(start: number, end: number) {
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
+
+// Números disponíveis para compra: 201–210, 231–287, 289–330,
+// 351–433, 435–437 e 439–443.
+const NUMBERS = [
+  ...range(201, 210),
+  ...range(231, 287),
+  ...range(289, 330),
+  ...range(351, 433),
+  ...range(435, 437),
+  ...range(439, 443),
+];
 
 const FORM_ACTION =
   "https://docs.google.com/forms/d/e/1FAIpQLSfh-aQa_VrZI7SI7Ihrc6VyoHhsueVzTdYSNHxUs5Wk5EeMKw/formResponse";
@@ -126,6 +137,11 @@ export default function Home() {
   const taken = useMemo(
     () => Array.from(new Set([...serverReserved, ...localTaken])),
     [serverReserved, localTaken]
+  );
+
+  const takenAvailable = useMemo(
+    () => taken.filter((n) => NUMBERS.includes(n)),
+    [taken]
   );
 
   useEffect(() => {
@@ -348,7 +364,7 @@ export default function Home() {
             Escolha o seu número da sorte
           </h2>
           <p className="mb-6 text-center text-w4">
-            Números de {START} a {END} · clique para reservar
+            {NUMBERS.length} números disponíveis · clique para reservar
           </p>
           <div className="grid grid-cols-4 gap-3 sm:grid-cols-5 md:grid-cols-8 lg:grid-cols-10">
             {NUMBERS.map((n) => {
@@ -368,11 +384,11 @@ export default function Home() {
             })}
           </div>
           <p className="mt-4 text-center text-xs text-w5">
-            {taken.length === 0
+            {takenAvailable.length === 0
               ? "Todos os números estão disponíveis. Boa sorte! 🍀"
               : configured
-                ? `${taken.length} de ${NUMBERS.length} número(s) já reservado(s).`
-                : `${taken.length} número(s) reservado(s) neste dispositivo.`}
+                ? `${takenAvailable.length} de ${NUMBERS.length} número(s) já reservado(s).`
+                : `${takenAvailable.length} número(s) reservado(s) neste dispositivo.`}
           </p>
         </section>
       </main>
