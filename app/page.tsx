@@ -8,21 +8,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { PIX_KEY, PIX_NAME } from "./lib/pix";
-
-function range(start: number, end: number) {
-  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
-}
-
-// Números disponíveis para compra: 201–210, 231–287, 289–330,
-// 351–433, 435–437 e 439–443.
-const NUMBERS = [
-  ...range(201, 210),
-  ...range(231, 287),
-  ...range(289, 330),
-  ...range(351, 433),
-  ...range(435, 437),
-  ...range(439, 443),
-];
+import { NUMBERS } from "./lib/rifa";
 
 const FORM_ACTION =
   "https://docs.google.com/forms/d/e/1FAIpQLSfh-aQa_VrZI7SI7Ihrc6VyoHhsueVzTdYSNHxUs5Wk5EeMKw/formResponse";
@@ -32,6 +18,42 @@ const ENTRY = {
   numero: "entry.131190346",
   telefone: "entry.1086276901",
 };
+
+// Comprovante de pagamento (obrigatório): enviado para /api/receipt, que
+// repassa o arquivo para o Google Drive via Apps Script.
+const MAX_RECEIPT_BYTES = 4 * 1024 * 1024;
+const RECEIPT_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "application/pdf",
+];
+const RECEIPT_EXTENSIONS: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+  heic: "image/heic",
+  pdf: "application/pdf",
+};
+
+// Alguns aparelhos enviam o arquivo sem MIME (ou como octet-stream); nesse
+// caso a extensão define o tipo aceito.
+function receiptMime(file: File): string | null {
+  const type = file.type;
+  if (type && type !== "application/octet-stream") {
+    return RECEIPT_TYPES.includes(type) ? type : null;
+  }
+  const ext = file.name.toLowerCase().split(".").pop() ?? "";
+  return RECEIPT_EXTENSIONS[ext] ?? null;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 const PRIZES = [
   { medal: "🥇", place: "1º lugar", value: "R$ 150,00" },
@@ -119,6 +141,9 @@ export default function Home() {
   const [telefone, setTelefone] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [receipt, setReceipt] = useState<File | null>(null);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [clicked, setClicked] = useState<number | null>(null);
   const [confetti, setConfetti] = useState<Confetti[]>([]);
   const [serverReserved, setServerReserved] = useState<number[]>([]);
@@ -193,6 +218,9 @@ export default function Home() {
         setSelected(null);
         setNome("");
         setTelefone("");
+        setReceipt(null);
+        setReceiptError(null);
+        setSubmitError(null);
       }
     };
     document.addEventListener("keydown", onKey);
@@ -203,12 +231,19 @@ export default function Home() {
     };
   }, [selected]);
 
-  const closeModal = () => {
-    if (submitting) return;
+  const resetForm = () => {
     setCopied(null);
-    setSelected(null);
     setNome("");
     setTelefone("");
+    setReceipt(null);
+    setReceiptError(null);
+    setSubmitError(null);
+  };
+
+  const closeModal = () => {
+    if (submitting) return;
+    setSelected(null);
+    resetForm();
   };
 
   const copy = async (text: string, tag: string) => {
@@ -241,16 +276,83 @@ export default function Home() {
     window.setTimeout(() => setSelected(n), 180);
   };
 
+  const handleReceiptChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    setSubmitError(null);
+
+    if (!file) {
+      setReceipt(null);
+      setReceiptError(null);
+      return;
+    }
+
+    if (!receiptMime(file)) {
+      setReceipt(null);
+      setReceiptError("Formato inválido. Envie JPG, PNG, WEBP, HEIC ou PDF.");
+      e.target.value = "";
+      return;
+    }
+
+    if (file.size > MAX_RECEIPT_BYTES) {
+      setReceipt(null);
+      setReceiptError(
+        `Arquivo muito grande (${formatBytes(file.size)}). Máximo de 4 MB.`
+      );
+      e.target.value = "";
+      return;
+    }
+
+    setReceipt(file);
+    setReceiptError(null);
+  };
+
   const valid = useMemo(
-    () => nome.trim().length >= 3 && telefone.replace(/\D/g, "").length >= 10,
-    [nome, telefone]
+    () =>
+      nome.trim().length >= 3 &&
+      telefone.replace(/\D/g, "").length >= 10 &&
+      receipt !== null &&
+      receiptError === null,
+    [nome, telefone, receipt, receiptError]
   );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!valid || selected === null || submitting) return;
+    if (!valid || selected === null || submitting || !receipt) return;
     setSubmitting(true);
+    setSubmitError(null);
 
+    // 1) O comprovante é obrigatório: só reserva se o upload der certo.
+    try {
+      const receiptBody = new FormData();
+      receiptBody.append("comprovante", receipt);
+      receiptBody.append("numero", String(selected));
+      receiptBody.append("nome", nome.trim());
+      receiptBody.append("telefone", telefone);
+
+      const res = await fetch("/api/receipt", {
+        method: "POST",
+        body: receiptBody,
+      });
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || !data?.ok) {
+        setSubmitting(false);
+        setSubmitError(
+          data?.error === "not_configured"
+            ? "O envio de comprovante está indisponível no momento. Fale com a organização."
+            : "Não foi possível enviar o comprovante. Tente novamente."
+        );
+        return;
+      }
+    } catch {
+      setSubmitting(false);
+      setSubmitError(
+        "Não foi possível enviar o comprovante. Verifique sua conexão e tente novamente."
+      );
+      return;
+    }
+
+    // 2) Com o comprovante salvo, registra a reserva no Google Forms.
     const body = new URLSearchParams();
     body.append(ENTRY.nome, nome.trim());
     body.append(ENTRY.numero, String(selected));
@@ -280,8 +382,7 @@ export default function Home() {
   const closeSuccess = () => {
     setSuccess(false);
     setSelected(null);
-    setNome("");
-    setTelefone("");
+    resetForm();
   };
 
   return (
@@ -520,6 +621,34 @@ export default function Home() {
                   />
                 </div>
 
+                <div>
+                  <label
+                    className="mb-1.5 block text-sm text-w3"
+                    htmlFor="comprovante"
+                  >
+                    Comprovante de pagamento{" "}
+                    <span className="text-g3">*</span>
+                  </label>
+                  <input
+                    id="comprovante"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/heic,application/pdf"
+                    onChange={handleReceiptChange}
+                    required
+                    className="field w-full cursor-pointer rounded-xl px-4 py-3 text-sm text-w2 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-g2/20 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-g3"
+                  />
+                  {receipt && (
+                    <p className="mt-1.5 text-xs text-g3">
+                      {receipt.name} · {formatBytes(receipt.size)}
+                    </p>
+                  )}
+                  {receiptError && (
+                    <p className="mt-1.5 text-xs text-red-400">
+                      {receiptError}
+                    </p>
+                  )}
+                </div>
+
                 <button
                   type="submit"
                   disabled={!valid || submitting}
@@ -527,8 +656,14 @@ export default function Home() {
                 >
                   {submitting ? "Enviando..." : "Confirmar minha reserva 🎉"}
                 </button>
+                {submitError && (
+                  <p className="text-center text-xs text-red-400">
+                    {submitError}
+                  </p>
+                )}
                 <p className="text-center text-xs text-w5">
-                  Já pagou? Confirme e envie o comprovante para nós.
+                  Anexe o comprovante do Pix de R$ 5,00 para confirmar sua
+                  reserva.
                 </p>
               </form>
             </div>
@@ -586,9 +721,8 @@ export default function Home() {
               reservado com sucesso.
             </p>
             <p className="rise mt-2 text-sm text-w4">
-              Agora é só fazer o Pix de <strong>R$ 5,00</strong> para a chave{" "}
-              <strong className="text-pp4">{PIX_KEY}</strong> e enviar o
-              comprovante. 🍀
+              Recebemos seu comprovante de <strong>R$ 5,00</strong> e ele será
+              conferido pela organização. 🍀
             </p>
             <button
               onClick={closeSuccess}

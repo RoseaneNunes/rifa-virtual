@@ -20,6 +20,31 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Comprovante de pagamento
+
+O formulário de reserva exige o upload do comprovante do Pix (imagem ou PDF, até
+4 MB). O arquivo **não** é enviado ao Google Forms — ele é repassado pela rota
+`POST /api/receipt` para um Web App do Google Apps Script, que salva o comprovante
+no Google Drive.
+
+### Configuração
+
+1. Publique o script em [`apps-script/receipt-webapp.gs`](apps-script/receipt-webapp.gs)
+   seguindo as instruções no topo do arquivo.
+2. Defina as variáveis de ambiente (local e na Vercel):
+
+   | Variável | Descrição |
+   | --- | --- |
+   | `RECEIPT_UPLOAD_URL` | URL do Web App publicado no Apps Script |
+   | `RECEIPT_SHARED_SECRET` | Mesmo segredo configurado no Apps Script |
+   | `SHEET_CSV_URL` | CSV publicado da planilha de reservados |
+   | `SHEET_NUMERO_COLUMN` | Coluna com o número da rifa (padrão: `numero da rifa`) |
+
+   Use o [`.env.example`](.env.example) como base.
+
+> Sem `RECEIPT_UPLOAD_URL` configurada, a rota responde `503` e a reserva não é
+> concluída (o comprovante é obrigatório).
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
