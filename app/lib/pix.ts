@@ -1,2 +1,2 @@
-export const PIX_KEY = "roseanesje2014@gmail.com";
-export const PIX_NAME = "Roseane Nunes dos Anjos";
+export const PIX_KEY = "83996838160";
+export const PIX_NAME = "Nathan Pereira de Almeida";
